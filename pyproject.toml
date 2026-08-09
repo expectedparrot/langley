@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langley"
+version = "0.1.0"
+description = "Agent-first Analysis of Competing Hypotheses CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "edsl @ git+https://github.com/expectedparrot/edsl.git@main",
+  "pydantic>=2.7",
+  "rich>=13.7",
+  "typer>=0.12"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+langley = "langley.cli:main"
+
+[project.urls]
+Homepage = "https://expectedparrot.github.io/langley/"
+Documentation = "https://expectedparrot.github.io/langley/"
+Repository = "https://github.com/expectedparrot/langley"
+Issues = "https://github.com/expectedparrot/langley/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+langley = ["docs_content/*.md"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
