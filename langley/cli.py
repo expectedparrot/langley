@@ -98,7 +98,16 @@ def init(title: str = typer.Option(...), question: str = typer.Option(...), scop
 
 
 def step(label: str, args: list[str], reason: str, mutates=True, approval=False) -> dict:
-    return {"id": label.lower().replace(" ", "_"), "label": label, "argv": args, "mutates_state": mutates, "requires_user_approval": approval, "reason": reason}
+    project_root = store().root.resolve()
+    portable_args = list(args)
+    if portable_args and portable_args[0] == "langley" and "--project-dir" not in portable_args:
+        portable_args = ["langley", "--project-dir", str(project_root), *portable_args[1:]]
+    return {
+        "id": label.lower().replace(" ", "_"), "label": label,
+        "argv": portable_args, "cwd": str(project_root),
+        "mutates_state": mutates, "requires_user_approval": approval,
+        "reason": reason,
+    }
 
 
 def next_action(s: Store) -> tuple[str, list[dict]]:
@@ -428,7 +437,9 @@ def generate_job(kind: str,target: str|None,agents: Path|None,iterations: int,ou
     command=f"langley job generate {kind}"
     def run():
         from . import edsl_jobs
-        s=store(); state=s.state(); jid=s.next_id("jobs","j"); out=output or s.dir/"jobs"/jid/"jobs.ep"; jobs=edsl_jobs.build(kind,s.project(),state,jid,target=target,agents_path=agents)
+        s=store(); state=s.state(); jid=s.next_id("jobs","j"); out=output or s.dir/"jobs"/jid/"jobs.ep"
+        out = (s.root / out).resolve() if not out.is_absolute() else out.resolve()
+        jobs=edsl_jobs.build(kind,s.project(),state,jid,target=target,agents_path=agents)
         if iterations>1: jobs.run_config.parameters.n=iterations
         edsl_jobs.save(jobs,out); item={"id":jid,"job_type":kind,"project_id":s.project()["id"],"project_revision":state["revision"],"input_hash":analytical_hash(state),"jobs_path":str(out),"jobs_hash":digest(out.read_bytes()),"question_names":list(jobs.survey.question_names),"target":{"id":target} if target else {},"status":"generated","created_at":now()}; mutate("job.created",item,command)
         result=out.with_name("results.ep"); handoff=[step("Inspect EDSL job",["ep","inspect",str(out)],"Inspect prompts and context.",False),step("Estimate EDSL cost",["ep","jobs","cost",str(out)],"Estimate cost before execution.",False),step("Run EDSL job",["ep","run",str(out),"--model","<model-name>","--output",str(result)],"This may incur cost and transmit project data.",False,True),step("Ingest EDSL results",["langley","job","ingest",jid,"--from",str(result)],"Create reviewable proposals.")]; finish(command,item,next_steps=handoff)

@@ -642,7 +642,12 @@ the agent through inspect, cost, approval-gated execution, ingestion, and propos
 review. It does not claim that an `ep run` occurred merely because a Jobs file exists.
 
 `next_steps[].argv` is always an argument array so an agent need not invoke a shell.
-For convenience, human output may also show a shell-escaped command string.
+Every Langley argv includes the canonical absolute `--project-dir` selector and every
+action includes an absolute `cwd`. Cross-tool actions such as `ep inspect`, cost, and
+run also carry `cwd` and use absolute artifact paths. Callers execute argv directly
+with the supplied cwd; they must not reconstruct commands or infer project context.
+For convenience, human output may also show a shell-escaped command string derived
+from argv.
 
 ### 10.3 Actor and provenance
 

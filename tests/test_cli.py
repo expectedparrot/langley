@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -30,12 +33,67 @@ def initialize(project: Path) -> None:
 def test_agent_first_envelope_and_next(tmp_path):
     outside = invoke(tmp_path, "next")
     assert outside["data"]["phase"] == "setup"
-    assert outside["data"]["action"]["argv"][0:2] == ["langley", "init"]
+    assert outside["data"]["action"]["argv"][0:3] == ["langley", "--project-dir", str(tmp_path.resolve())]
+    assert outside["data"]["action"]["argv"][3] == "init"
+    assert outside["data"]["action"]["cwd"] == str(tmp_path.resolve())
     initialize(tmp_path)
     status = invoke(tmp_path, "status")
     assert status["data"]["phase"] == "matrix"
-    assert status["next_steps"][0]["argv"] == ["langley", "matrix", "next"]
+    assert status["next_steps"][0]["argv"] == ["langley", "--project-dir", str(tmp_path.resolve()), "matrix", "next"]
     assert set(status) == {"schema_version", "command", "argv", "status", "project_root", "revision", "data", "artifacts", "warnings", "errors", "next_steps"}
+
+
+def actions_in(payload):
+    actions = list(payload.get("next_steps", []))
+    data = payload.get("data", {})
+    if isinstance(data.get("action"), dict):
+        actions.append(data["action"])
+    actions.extend(data.get("alternatives", []))
+    return actions
+
+
+def assert_portable_actions(payload, project):
+    root = str(project.resolve())
+    assert payload["project_root"] == root
+    for action in actions_in(payload):
+        assert action["cwd"] == root
+        assert Path(action["cwd"]).is_absolute()
+        if action["argv"][0] == "langley":
+            assert action["argv"][1:3] == ["--project-dir", root]
+        for value in action["argv"]:
+            if ".langley" in value:
+                assert Path(value).is_absolute()
+
+
+def test_actions_are_portable_for_unicode_paths_and_distinct_projects(tmp_path):
+    caller = tmp_path / "unrelated caller"
+    caller.mkdir()
+    first = tmp_path / "projects" / "ACH Study α"
+    second = tmp_path / "projects" / "ACH Study β"
+    invoke(first, "init", "--title", "First", "--question", "What happened?")
+    invoke(second, "init", "--title", "Second", "--question", "Another question")
+
+    first_next = invoke(first, "next")
+    first_guide = invoke(first, "guide")
+    first_status = invoke(first, "status")
+    second_next = invoke(second, "next")
+    for payload in (first_next, first_guide, first_status):
+        assert_portable_actions(payload, first)
+    assert_portable_actions(second_next, second)
+    assert first_next["data"]["action"]["argv"] != second_next["data"]["action"]["argv"]
+
+    # Execute the returned project selector unchanged while the process is rooted
+    # in an unrelated caller directory; only append the action's required content.
+    action = first_next["data"]["action"]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parents[1])
+    result = subprocess.run(
+        [sys.executable, "-m", "langley", *action["argv"][1:], "--name", "Extra", "--description", "Third alternative"],
+        cwd=caller, env=env, text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(invoke(first, "hypothesis", "list")["data"]["hypotheses"]) == 1
+    assert invoke(second, "hypothesis", "list")["data"]["hypotheses"] == []
 
 
 def test_complete_manual_workflow_and_report(tmp_path):

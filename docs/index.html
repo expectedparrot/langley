@@ -74,7 +74,7 @@ langley next</code></pre>
     }
   }
 }</code></pre>
-    <p>Every command returns one stable JSON object on stdout. Structured errors include recovery hints; external model execution is clearly marked as approval-gated.</p>
+    <p>Every command returns one stable JSON object on stdout. Each action contains a directly executable argument array with an absolute <code>--project-dir</code> selector and an explicit absolute <code>cwd</code>. Callers should execute that argv with the supplied cwd; they must not reconstruct the command or infer project context. Structured errors include recovery hints, and external model execution is clearly marked as approval-gated.</p>
   </section>
 
   <section id="hypotheses">

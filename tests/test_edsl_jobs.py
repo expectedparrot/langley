@@ -48,6 +48,15 @@ def test_results_ingest_as_proposals_and_accept_materializes(tmp_path):
     generated = runner.invoke(app, ["--project-dir", str(project_dir), "job", "generate", "hypotheses"])
     assert generated.exit_code == 0, generated.output
     payload = __import__("json").loads(generated.output)
+    root = str(project_dir.resolve())
+    for action in payload["next_steps"]:
+        assert action["cwd"] == root
+        assert __import__("pathlib").Path(action["cwd"]).is_absolute()
+        if action["argv"][0] == "langley":
+            assert action["argv"][1:3] == ["--project-dir", root]
+        for value in action["argv"]:
+            if ".langley" in value:
+                assert __import__("pathlib").Path(value).is_absolute()
     jobs = __import__("edsl").Jobs.git.load(payload["data"]["jobs_path"])
     results = Results(survey=jobs.survey, data=[Result(
         agent=Agent(name="critic"), scenario=Scenario(dict(jobs.scenarios[0])),
