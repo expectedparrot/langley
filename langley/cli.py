@@ -114,7 +114,7 @@ def next_action(s: Store) -> tuple[str, list[dict]]:
     if not s.exists: return "setup", [step("Initialize analysis", ["langley", "init", "--title", "<title>", "--question", "<question>"], "No project exists.")]
     state, p = s.state(), phase(s.state())
     if p == "hypotheses": return p, [step("Add a hypothesis", ["langley", "hypothesis", "add"], "At least two active hypotheses are required."), step("Generate hypothesis proposals", ["langley", "job", "generate", "hypotheses"], "EDSL can elicit diverse alternatives.")]
-    if p == "evidence": return p, [step("Add evidence", ["langley", "evidence", "add"], "The matrix needs evidence rows."), step("Generate evidence proposals", ["langley", "job", "generate", "evidence"], "EDSL can suggest expected observations.")]
+    if p == "evidence": return p, [step("Add evidence", ["langley", "evidence", "add"], "The matrix needs evidence rows. Read `evidence add --help` before adding; absence evidence has three additional required fields."), step("Generate evidence proposals", ["langley", "job", "generate", "evidence"], "EDSL can suggest expected observations.")]
     if p == "matrix":
         gap = gaps(state)[0]; return p, [step("Assess the next evidence row", ["langley", "matrix", "next"], f'{gap["evidence_id"]} has unassessed cells.',False), step("Generate matrix-row proposals", ["langley", "job", "generate", "matrix-row", "--evidence", gap["evidence_id"]], "EDSL can provide independent judgments.")]
     if p == "conclusion": return p, [step("Draft a conclusion", ["langley", "conclusion", "draft", "--input", "conclusion.json"], "All active hypotheses must be compared.")]
@@ -188,10 +188,27 @@ def hypothesis_archive(identifier: str, reason: str = typer.Option(...), citing:
 
 
 @evidence_app.command("add")
-def evidence_add(label: str = typer.Option(...), kind: str = typer.Option(...), details: str = typer.Option(""), credibility: str = typer.Option("unknown"), importance: str = typer.Option("unknown"), source: str = typer.Option(""), expected_if: str = typer.Option(""), observability: str = typer.Option("unknown"), observability_rationale: str = typer.Option(""), search_performed: str = typer.Option("")):
+def evidence_add(
+    label: str = typer.Option(..., help="Short evidence label."),
+    kind: str = typer.Option(..., help="One of: observation, argument, assumption, absence, context."),
+    details: str = typer.Option("", help="The observation or claim, distinct from its interpretation."),
+    credibility: str = typer.Option("unknown", help="Source credibility: low, medium, high, unknown."),
+    importance: str = typer.Option("unknown", help="Analytical importance: low, medium, high, unknown."),
+    source: str = typer.Option("", help="Source citation or provenance."),
+    expected_if: str = typer.Option("", help="Required for absence: comma-separated hypotheses under which the missing observation is expected."),
+    observability: str = typer.Option("unknown", help="Chance of observing the evidence if present: low, medium, high, unknown."),
+    observability_rationale: str = typer.Option("", help="Required for absence: why the missing observation should have been observable."),
+    search_performed: str = typer.Option("", help="Required for absence: what sources were searched, when, and with what coverage."),
+):
+    """Add real evidence; use this help for discovery, never a throwaway item.
+
+    Absence requires --expected-if, --observability-rationale, and
+    --search-performed together. Invalid input returns a nonzero exit status
+    and an error envelope without creating evidence.
+    """
     command="langley evidence add"
     def run():
-        s=store(); item=EvidenceInput(label=label,kind=kind,details=details,credibility=credibility,importance=importance,source={"citation":source},expected_if=[x for x in expected_if.split(",") if x],observability=observability,observability_rationale=observability_rationale,search_performed=search_performed).model_dump(); item.update({"id":s.next_id("evidence","e"),"status":"active","created_at":now(),"created_by":runtime.actor.model_dump()}); mutate("evidence.created",item,command); finish(command,item)
+        s=store(); item=EvidenceInput(label=label,kind=kind,details=details,credibility=credibility,importance=importance,source={"citation":source},expected_if=[x.strip() for x in expected_if.split(",") if x.strip()],observability=observability,observability_rationale=observability_rationale,search_performed=search_performed).model_dump(); item.update({"id":s.next_id("evidence","e"),"status":"active","created_at":now(),"created_by":runtime.actor.model_dump()}); mutate("evidence.created",item,command); finish(command,item)
     guard(command,run)
 
 
@@ -389,7 +406,9 @@ def report_generate(name: str=typer.Option("latest"),draft: bool=typer.Option(Fa
         report="\n".join(lines)+"\n"; (directory/"report.md").write_text(report,encoding="utf-8"); write_json(directory/"analysis.json",{"project":project,"revision":s.revision,"state":state,"analysis":a,"validation_issues":issues})
         with (directory/"matrix.csv").open("w",newline="",encoding="utf-8") as handle:
             writer=csv.writer(handle); hs=[h for h in state["hypotheses"].values() if h["status"]=="active"]; writer.writerow(["evidence_id","evidence",*[h["id"] for h in hs]])
-            for e in state["evidence"].values(): writer.writerow([e["id"],e["label"],*[state["matrix"].get(f'{e["id"]}:{h["id"]}',{}).get("rating","not_assessed") for h in hs]])
+            for e in state["evidence"].values():
+                if e["status"] == "active":
+                    writer.writerow([e["id"],e["label"],*[state["matrix"].get(f'{e["id"]}:{h["id"]}',{}).get("rating","not_assessed") for h in hs]])
         files={p.name:digest(p.read_bytes()) for p in directory.iterdir()}; write_json(directory/"manifest.json",{"schema_version":1,"project_id":project["id"],"revision":s.revision,"created_at":now(),"files":files}); finish(command,{"name":name,"paths":{p.name:str(p) for p in directory.iterdir()}})
     guard(command,run)
 
@@ -547,6 +566,7 @@ def review_proposal(identifier: str,status: str,reason: str,accept_stale: bool):
 DOCS = {
     "overview": "Langley implements Heuer's eight-step Analysis of Competing Hypotheses method.",
     "workflow": "Run `langley next`, perform its action, and repeat. Compare evidence row-by-row before drawing conclusions.",
+    "evidence": "Run `langley evidence add --help` before the first addition; never create throwaway evidence to discover fields. Kinds: observation, argument, assumption, absence, context. Absence additionally requires --expected-if (comma-separated hypotheses), --observability-rationale, and --search-performed. Levels use low, medium, high, unknown. Check each command's exit status and JSON status/errors before reading data.id; do not hide errors with an extraction pipeline. Archived evidence remains in the audit state but is excluded from scoring and generated report matrix.csv.",
     "matrix": "Assess every evidence/hypothesis pair as consistent, inconsistent, neutral, or not applicable. Seek disconfirmation.",
     "scoring": "Raw and adjusted inconsistency scores are transparent heuristics, never probabilities or verdicts.",
     "edsl": "Generate model-free Jobs, inspect and cost them, run with `ep run` after approval, ingest Results, then review proposals.",
