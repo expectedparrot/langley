@@ -104,7 +104,7 @@ langley hypothesis add \
   --observability high \
   --observability-rationale "Every deployment emits an audited event" \
   --search-performed "Queried 13:00–15:00 UTC"</code></pre>
-    <p>An absence must explain why the missing event should have been observable and what search was performed. This prevents “we saw no evidence” from masquerading as disproof.</p>
+    <p>An absence requires all three fields: <code>--expected-if</code>, <code>--observability-rationale</code>, and <code>--search-performed</code>. Read <code>langley evidence add --help</code> before adding evidence; never create a test item to discover the contract. This prevents “we saw no evidence” from masquerading as disproof. Check both the command exit status and JSON errors before extracting an evidence ID.</p>
   </section>
 
   <section id="matrix">
@@ -188,7 +188,7 @@ langley proposal accept p001 --reason "Reviewed and sound"</code></pre>
   },
   "validation_issues": []
 }</code></pre>
-    <p>The generated directory contains <code>report.md</code>, <code>matrix.csv</code>, canonical <code>analysis.json</code>, and a hash manifest tied to the exact project revision.</p>
+    <p>The generated directory contains <code>report.md</code>, <code>matrix.csv</code>, canonical <code>analysis.json</code>, and a hash manifest tied to the exact project revision. The report matrix includes only active evidence and hypotheses; archived records remain in the canonical state and event history for audit.</p>
   </section>
 
   <section id="install">

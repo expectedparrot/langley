@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import os
 import subprocess
 import sys
@@ -9,6 +10,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from langley.cli import app
+from langley.store import Store
+import pytest
 
 
 runner = CliRunner()
@@ -146,3 +149,62 @@ def test_matrix_requires_complete_row(tmp_path):
     row.write_text(json.dumps({"assessments": [{"hypothesis_id": "h001", "rating": "neutral", "rationale": "Does not distinguish."}]}))
     payload = invoke(tmp_path, "matrix", "set", "--evidence", "e001", "--input", str(row), ok=False)
     assert payload["errors"][0]["code"] == "MATRIX_ROW_INCOMPLETE"
+
+
+def test_evidence_help_is_non_mutating_and_explains_absence(tmp_path):
+    result = runner.invoke(app, ["--project-dir", str(tmp_path), "evidence", "add", "--help"], terminal_width=140)
+    assert result.exit_code == 0
+    assert not (tmp_path / ".langley").exists()
+    text = " ".join(result.output.split())
+    for option in ("--expected-if", "--observability-rationale", "--search-performed"):
+        assert option in text
+    assert "Required for absence" in text
+    for kind in ("observation", "argument", "assumption", "absence", "context"):
+        assert kind in text
+
+
+@pytest.mark.parametrize("missing", ["--expected-if", "--observability-rationale", "--search-performed"])
+def test_absence_failure_has_nonzero_exit_and_does_not_mutate(tmp_path, missing):
+    initialize(tmp_path)
+    before = Store(tmp_path).revision
+    fields = {
+        "--expected-if": "h001, h002",
+        "--observability-rationale": "The complete release log records every deployment.",
+        "--search-performed": "Searched the release log for the outage window.",
+    }
+    args = ["--project-dir", str(tmp_path), "evidence", "add", "--label", "No deployment", "--kind", "absence"]
+    for key, value in fields.items():
+        if key != missing:
+            args.extend([key, value])
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["status"] == "error"
+    assert payload["errors"][0]["code"] == "VALIDATION_ERROR"
+    assert "id" not in payload["data"]
+    assert Store(tmp_path).revision == before
+    assert len(Store(tmp_path).state()["evidence"]) == 1
+
+
+def test_absence_contract_records_expected_hypotheses(tmp_path):
+    initialize(tmp_path)
+    result = invoke(tmp_path, "evidence", "add", "--label", "No deployment", "--kind", "absence",
+                    "--expected-if", "h001, h002", "--observability", "high",
+                    "--observability-rationale", "Every deployment appears in the release log.",
+                    "--search-performed", "Searched the release log for the outage window.")
+    assert result["data"]["expected_if"] == ["h001", "h002"]
+    assert result["data"]["observability"] == "high"
+
+
+def test_report_matrix_excludes_archived_evidence_but_preserves_audit(tmp_path):
+    initialize(tmp_path)
+    invoke(tmp_path, "evidence", "add", "--label", "Superseded claim", "--kind", "observation")
+    invoke(tmp_path, "evidence", "archive", "e002", "--reason", "Source corrected the claim.")
+    report = invoke(tmp_path, "report", "generate", "--name", "audit", "--draft")
+    paths = report["data"]["paths"]
+    with Path(paths["matrix.csv"]).open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["evidence_id"] for row in rows] == ["e001"]
+    state = json.loads(Path(paths["analysis.json"]).read_text())["state"]
+    assert state["evidence"]["e002"]["status"] == "archived"
+    assert len(Store(tmp_path).state()["evidence"]) == 2
